@@ -1,32 +1,22 @@
 import re
+import json
+import argparse
 from datetime import datetime
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 
-# ----------------------------
-# Regex patterns (precompiled)
-# ----------------------------
+# Precompiled regex patterns
 HEADER_RE = re.compile(
     r"PokerStars Hand #(?P<hand_id>\d+):.* - (?P<datetime>\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) ET"
 )
-
-SEAT_RE = re.compile(
-    r"Seat (?P<seat>\d+): (?P<name>.+) \(\$(?P<stack>[\d\.]+) in chips\)"
-)
-
+SEAT_RE = re.compile(r"Seat (?P<seat>\d+): (?P<name>.+) \(\$(?P<stack>[\d\.]+) in chips\)")
 ACTION_RE = re.compile(
     r"^(?P<player>[^:]+): (?P<action>posts small blind|posts big blind|calls|raises|bets|checks|folds|shows|mucks|collected)(?: \$?(?P<amount>[\d\.]+))?"
 )
 
-# ----------------------------
-# Helpers
-# ----------------------------
 
 def split_into_blocks(raw_text: str) -> List[str]:
-    """
-    Split full hand history file into individual hand blocks.
-    """
-    blocks = []
-    current = []
+    """Break a hand history file into individual hands."""
+    blocks, current = [], []
     for line in raw_text.splitlines():
         if line.startswith("PokerStars Hand #") and current:
             blocks.append("\n".join(current))
@@ -38,16 +28,8 @@ def split_into_blocks(raw_text: str) -> List[str]:
 
 
 def parse_hand(raw_text: str) -> Dict[str, Any]:
-    """
-    Parse a single hand into structured data.
-    """
-    hand = {
-        "id": None,
-        "datetime": None,
-        "players": [],
-        "actions": []
-    }
-
+    """Parse one hand into structured dict."""
+    hand = {"id": None, "datetime": None, "players": [], "actions": []}
     errors: List[str] = []
 
     try:
@@ -57,48 +39,54 @@ def parse_hand(raw_text: str) -> Dict[str, Any]:
             hand["id"] = int(header.group("hand_id"))
             hand["datetime"] = datetime.strptime(header.group("datetime"), "%Y/%m/%d %H:%M:%S")
         else:
-            errors.append("Header not found")
+            errors.append("Missing header")
 
-        # Seats / players
+        # Players
         for m in SEAT_RE.finditer(raw_text):
-            hand["players"].append({
-                "seat": int(m.group("seat")),
-                "name": m.group("name"),
-                "stack_start": float(m.group("stack"))
-            })
+            hand["players"].append(
+                {"seat": int(m.group("seat")), "name": m.group("name"), "stack_start": float(m.group("stack"))}
+            )
 
         # Actions
         for line in raw_text.splitlines():
             m = ACTION_RE.match(line.strip())
             if m:
-                action = {
-                    "player": m.group("player"),
-                    "action": m.group("action"),
-                    "amount": float(m.group("amount")) if m.group("amount") else None
-                }
-                hand["actions"].append(action)
-
+                hand["actions"].append(
+                    {
+                        "player": m.group("player"),
+                        "action": m.group("action"),
+                        "amount": float(m.group("amount")) if m.group("amount") else None,
+                    }
+                )
     except Exception as e:
         errors.append(str(e))
 
-    return {
-        "hand": hand,
-        "errors": errors
-    }
+    return {"hand": hand, "errors": errors}
 
 
 def parse_file(file_path: str) -> List[Dict[str, Any]]:
-    """
-    Parse a full hand history file into structured hands.
-    """
+    """Parse an entire hand history file."""
     with open(file_path, "r", encoding="utf-8") as f:
         raw_text = f.read()
+    return [parse_hand(block) for block in split_into_blocks(raw_text)]
 
-    blocks = split_into_blocks(raw_text)
 
-    parsed_hands = []
-    for block in blocks:
-        result = parse_hand(block)
-        parsed_hands.append(result)
+def main():
+    parser = argparse.ArgumentParser(description="PokerStars hand history parser")
+    parser.add_argument("input", help="Input hand history file")
+    parser.add_argument("--json", help="Write parsed output to JSON")
+    args = parser.parse_args()
 
-    return parsed_hands
+    hands = parse_file(args.input)
+
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as f:
+            json.dump(hands, f, indent=2, default=str)
+        print(f"Parsed {len(hands)} hands → saved to {args.json}")
+    else:
+        print(json.dumps(hands, indent=2, default=str))
+
+
+if __name__ == "__main__":
+    main()
+
